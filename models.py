@@ -105,6 +105,9 @@ class GeneratorUNet(nn.Module):
         )
 
     def forward(self, x):
+        if any(dim % 16 for dim in x.shape[2:]):
+            raise ValueError("each image dimension must be a multiple of 16.")
+
         # U-Net generator with skip connections from encoder to decoder
         d1 = self.down1(x)
         d2 = self.down2(d1)
