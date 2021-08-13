@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import os.path as op
 import torch
@@ -118,15 +119,15 @@ def train_generator_only(
 
         if val_loader is not None:
             model.eval()
-            val_loss = 0
+            val_loss = []
             with torch.no_grad():
                 for images, targets in val_loader:
                     images = images.to(device)
                     targets = targets.to(device)
                     output = model(images)
-                    val_loss += loss_fn(output, targets, reduction="sum").item()
+                    val_loss.append(loss_fn(output, targets).item())
 
-            val_loss /= len(val_loader.dataset)
+            val_loss = np.mean(val_loss)
             val_loss_history.append(val_loss)
 
         if verbose_interval is not None and epoch % verbose_interval == 0:
