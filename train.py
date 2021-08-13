@@ -102,6 +102,7 @@ def train_generator_only(
 
     for epoch in epoch_range:
         model.train()
+        train_loss = []
         for images, targets in train_loader:
             # Zero out the gradients
             optimizer.zero_grad()
@@ -112,10 +113,12 @@ def train_generator_only(
 
             # Compute the loss
             loss = loss_fn(output, targets)
+            train_loss.append(loss.item())
             loss.backward()
             optimizer.step()
 
-        train_loss_history.append(loss.item())
+        train_loss = np.mean(train_loss)
+        train_loss_history.append(train_loss)
 
         if val_loader is not None:
             model.eval()
