@@ -349,7 +349,7 @@ def train_cgan(
         total_train_loss = []
         g_train_loss = []
         d_train_loss = []
-        for batch_idx, images, targets in enumerate(train_loader):
+        for batch_idx, (images, targets) in enumerate(train_loader):
             real_A = images.to(device)
             real_B = targets.to(device)
             valid = torch.ones(real_A.size(0), *patch_size, requires_grad=False).to(
