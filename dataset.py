@@ -36,6 +36,8 @@ class HCPDataset(Dataset):
         target_transform=None,
         input_modalities=None,
         output_modality=None,
+        dwi_input_slice_idx=None,
+        dwi_output_slice_idx=None,
         split="train",
         include_bval_bvec=False,
     ):
@@ -147,6 +149,9 @@ class HCPDataset(Dataset):
             default_preprocessing if target_transform == "default" else target_transform
         )
 
+        self.dwi_input_slice_idx = dwi_input_slice_idx
+        self.dwi_output_slice_idx = dwi_output_slice_idx
+
     def __len__(self):
         return len(self.subjects)
 
@@ -158,6 +163,9 @@ class HCPDataset(Dataset):
             # Either add a channel or if DWI, move channel to first dimension
             if "dwi" in modality:
                 img = img.permute(3, 0, 1, 2)
+                if self.dwi_input_slice_idx is not None:
+                    indices = torch.tensor(self.dwi_input_slice_idx)
+                    img = torch.index_select(img, 0, indices)
             else:
                 img = img.unsqueeze(0)
 
@@ -172,6 +180,9 @@ class HCPDataset(Dataset):
         # Either add a channel or if DWI, move channel to first dimension
         if "dwi" in self.output_modality:
             output_img = output_img.permute(3, 0, 1, 2)
+            if self.dwi_output_slice_idx is not None:
+                indices = torch.tensor(self.dwi_output_slice_idx)
+                output_img = torch.index_select(output_img, 0, indices)
         else:
             output_img = output_img.unsqueeze(0)
 
