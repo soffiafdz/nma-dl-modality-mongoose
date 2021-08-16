@@ -157,8 +157,8 @@ class HCPDataset(Dataset):
 
             input_images.append(img)
 
-        input_img = torch.cat(input_images)
-        output_img = torch.load(self.output_paths[self.output_modality][idx])
+        input_img = torch.cat(input_images).float()
+        output_img = torch.load(self.output_paths[self.output_modality][idx]).float()
 
         # Either add a channel or if DWI, move channel to first dimension
         if "dwi" in self.output_modality:
