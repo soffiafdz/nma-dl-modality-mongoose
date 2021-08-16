@@ -139,10 +139,7 @@ class HCPDataset(Dataset):
         )
 
     def __len__(self):
-        if self.slices is None:
-            return len(self.subjects)
-        else:
-            return len(self.subjects) * len(self.slices)
+        return len(self.subjects)
 
     def __getitem__(self, idx):
         input_images = []
