@@ -21,6 +21,17 @@ TrainResults = namedtuple(
     "TrainResults", ["model", "train_loss_history", "val_loss_history"]
 )
 
+CGANTrainResults = namedtuple(
+    "CGANTrainResults",
+    [
+        "model",
+        "total_train_loss_history",
+        "g_train_loss_history",
+        "d_train_loss_history",
+        "val_loss_history",
+    ],
+)
+
 
 def add_channel(img):
     """TO BE FILLED..."""
@@ -113,12 +124,13 @@ def train_generator_only(
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     model = model.to(device)
+    loss_fn = loss_fn.to(device)
+
     if init_checkpoint is not None:
         checkpoint = torch.load(init_checkpoint)
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         starting_epoch = checkpoint["epoch"] + 1
-        loss = checkpoint["loss"]
         train_loss_history = checkpoint["train_loss_history"]
         val_loss_history = checkpoint["val_loss_history"]
     else:
@@ -172,7 +184,7 @@ def train_generator_only(
             val_loss_history.append(val_loss)
 
         if verbose_interval is not None and epoch % verbose_interval == 0:
-            msg = f"Epoch {epoch:03d}: train_loss = {loss.item()}"
+            msg = f"Epoch {epoch:03d}: train_loss = {train_loss}"
             if val_loader is not None:
                 msg += f" val_loss = {val_loss}"
             print(msg)
@@ -183,7 +195,6 @@ def train_generator_only(
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "loss": loss.item(),
                     "train_loss_history": train_loss_history,
                     "val_loss_history": val_loss_history,
                 },
@@ -191,6 +202,258 @@ def train_generator_only(
             )
 
     return TrainResults(model, train_loss_history, val_loss_history)
+
+
+def train_cgan(
+    g_model,
+    d_model,
+    g_optimizer,
+    d_optimizer,
+    train_loader,
+    n_epochs,
+    d_update_threshold=0.8,
+    input_image_shape=(128, 160, 128),
+    lambda_voxel=100.0,
+    g_loss_fn=None,
+    d_loss_fn=None,
+    device="auto",
+    val_loader=None,
+    verbose_interval=None,
+    progress_bar=True,
+    checkpoint_interval=None,
+    checkpoint_file_pattern="generator_%d.pt",
+    init_checkpoint=None,
+):
+    """Train a generator model only.
+
+    Parameters
+    ----------
+    g_model : torch.nn.Module subclass
+        The generator model to train
+
+    d_model : torch.nn.Module subclass
+        The discriminator model to train
+
+    optimizer : torch.optim optimizer class
+        The optimizer to use for training
+
+    g_loss_fn : torch.nn.Module subclass
+        The loss function to use for the generator
+
+    d_loss_fn : torch.nn.Module subclass
+        The loss function to use for the discriminator
+
+    train_loader : torch.utils.data.DataLoader subclass
+        The dataset loader for the training data
+
+    device : ["cpu", "cuda", "auto"]
+        The device on which to train the model.
+        If auto (default), use GPU (cuda) if available or fallback to cpu.
+
+    n_epochs : int
+        The number of epochs to use for training
+
+    d_update_threshold : float, default=0.8
+        Accuracy threshold for discriminator updating. If the discriminator
+        accuracy (averaged over the patches in the "latent space") is below this
+        amount, we will update the discriminator in the current batch.
+
+    input_image_size : tuple
+        Size of the input images
+
+    lambda_voxel : float, default=100.0
+        Scalar weight applied to the generator loss
+
+    val_loader : torch.utils.data.DataLoader subclass, optional
+        An optional dataset loader for the validation dataset. If not
+        provided, validation loss will not be computed.
+
+    verbose_interval : int, optional
+        Every `verbose_interval` epochs, the train loop will print the
+        training loss.
+
+    progress_bar : bool, default=True,
+        If True, show progress bar for epochs.
+
+    checkpoint_interval : int, optional
+        Every `checkpoint_interval` epochs, the train loop
+        will checkpoint the model, saving it to the path in
+        `checkpoint_file_pattern`.
+
+    checkpoint_file_pattern : str, optional
+        The file pattern to use to save each model checkpoint. This
+        string must contain a %d token to allow the inclusion of the
+        epoch number in the filename. Default = "generator_%d.pt".
+
+    init_checkpoint : str, optional
+        The path to use for the intialization checkpoint. If None,
+        this function will train from scratch.
+    """
+    valid_devices = ["auto", "cpu", "cuda"]
+    if device not in valid_devices:
+        raise ValueError(
+            f"device must be one of {valid_devices}. Got {device} instead."
+        )
+    elif device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    d_loss_fn = d_loss_fn if d_loss_fn is not None else torch.nn.MSELoss()
+    g_loss_fn = g_loss_fn if g_loss_fn is not None else diceloss()
+
+    g_model = g_model.to(device)
+    d_model = d_model.to(device)
+
+    g_loss_fn = g_loss_fn.to(device)
+    d_loss_fn = d_loss_fn.to(device)
+
+    if init_checkpoint is not None:
+        checkpoint = torch.load(init_checkpoint)
+        g_model.load_state_dict(checkpoint["g_model_state_dict"])
+        d_model.load_state_dict(checkpoint["d_model_state_dict"])
+        g_optimizer.load_state_dict(checkpoint["g_optimizer_state_dict"])
+        d_optimizer.load_state_dict(checkpoint["d_optimizer_state_dict"])
+        starting_epoch = checkpoint["epoch"] + 1
+        total_train_loss_history = checkpoint["total_train_loss_history"]
+        g_train_loss_history = checkpoint["g_train_loss_history"]
+        d_train_loss_history = checkpoint["d_train_loss_history"]
+        val_loss_history = checkpoint["val_loss_history"]
+    else:
+        g_model.apply(weights_init_normal)
+        d_model.apply(weights_init_normal)
+        starting_epoch = 0
+        total_train_loss_history = []
+        g_train_loss_history = []
+        d_train_loss_history = []
+        val_loss_history = []
+
+    if starting_epoch > n_epochs:
+        raise ValueError(
+            "Checkpointed epoch number exceeds the number of requested epochs."
+            f"n_epochs = {n_epochs} "
+            f"but checkpointed epochs = {starting_epoch}."
+        )
+
+    epoch_range = trange(starting_epoch, n_epochs) if progress_bar else range(n_epochs)
+    if checkpoint_interval is not None:
+        os.makedirs(op.dirname(checkpoint_file_pattern), exist_ok=True)
+
+    patch_size = (1,) + tuple([dim // 2 ** 4 for dim in input_image_shape])
+
+    for epoch in epoch_range:
+        g_model.train()
+        d_model.train()
+        total_train_loss = []
+        g_train_loss = []
+        d_train_loss = []
+        for images, targets in train_loader:
+            real_A = images.to(device)
+            real_B = targets.to(device)
+            valid = torch.ones(real_A.size(0), *patch_size, requires_grad=False).to(
+                device
+            )
+            fake = torch.zeros(real_A.size(0), *patch_size, requires_grad=False).to(
+                device
+            )
+
+            # ---------------------
+            #  Train Discriminator, only update every disc_update batches
+            # ---------------------
+            # Real loss
+            fake_B = g_model(real_A)
+            pred_real = d_model(real_B, real_A)
+            # print(pred_real)
+            # print(valid.shape)
+            loss_real = d_loss_fn(pred_real, valid)
+
+            # Fake loss
+            pred_fake = d_model(fake_B.detach(), real_A)
+            loss_fake = d_loss_fn(pred_fake, fake)
+            # Total loss
+            loss_D = 0.5 * (loss_real + loss_fake)
+
+            d_real_acu = torch.ge(pred_real.squeeze(), 0.5).float()
+            d_fake_acu = torch.le(pred_fake.squeeze(), 0.5).float()
+            d_total_acu = torch.mean(torch.cat((d_real_acu, d_fake_acu), 0))
+
+            if d_total_acu <= d_update_threshold:
+                d_optimizer.zero_grad()
+                loss_D.backward()
+                d_optimizer.step()
+                # discriminator_update = 'True'
+
+            # ------------------
+            #  Train Generators
+            # ------------------
+            d_optimizer.zero_grad()
+            g_optimizer.zero_grad()
+
+            # GAN loss
+            fake_B = g_model(real_A)
+            pred_fake = d_model(fake_B, real_A)
+            loss_GAN = d_loss_fn(pred_fake, valid)
+            # Voxel-wise loss
+            loss_voxel = g_loss_fn(fake_B, real_B)
+
+            # Total loss
+            loss_G = loss_GAN + lambda_voxel * loss_voxel
+            loss_G.backward()
+
+            g_optimizer.step()
+
+            total_train_loss.append(loss_G.item())
+            d_train_loss.append(loss_GAN.item())
+            g_train_loss.append(loss_voxel.item())
+
+        total_train_loss = np.mean(total_train_loss)
+        d_train_loss = np.mean(d_train_loss)
+        g_train_loss = np.mean(g_train_loss)
+
+        total_train_loss_history.append(total_train_loss)
+        g_train_loss_history.append(g_train_loss)
+        d_train_loss_history.append(d_train_loss)
+
+        if val_loader is not None:
+            g_model.eval()
+            val_loss = []
+            with torch.no_grad():
+                for images, targets in val_loader:
+                    images = images.to(device)
+                    targets = targets.to(device)
+                    output = g_model(images)
+                    val_loss.append(g_loss_fn(output, targets).item())
+
+            val_loss = np.mean(val_loss)
+            val_loss_history.append(val_loss)
+
+        if verbose_interval is not None and epoch % verbose_interval == 0:
+            msg = f"Epoch {epoch:03d}: train_loss = {total_train_loss}"
+            # if val_loader is not None:
+            #     msg += f" val_loss = {val_loss}"
+            print(msg)
+
+        if checkpoint_interval is not None and epoch % checkpoint_interval == 0:
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "g_model_state_dict": g_model.state_dict(),
+                    "d_model_state_dict": d_model.state_dict(),
+                    "g_optimizer_state_dict": g_optimizer.state_dict(),
+                    "d_optimizer_state_dict": d_optimizer.state_dict(),
+                    "total_train_loss_history": total_train_loss_history,
+                    "g_train_loss_history": g_train_loss_history,
+                    "d_train_loss_history": d_train_loss_history,
+                    "val_loss_history": val_loss_history,
+                },
+                checkpoint_file_pattern % (epoch,),
+            )
+
+    return CGANTrainResults(
+        model,
+        total_train_loss_history,
+        g_train_loss_history,
+        d_train_loss_history,
+        val_loss_history,
+    )
 
 
 if __name__ == "__main__":

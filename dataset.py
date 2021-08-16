@@ -80,7 +80,8 @@ class HCPDataset(Dataset):
         )
 
         self.subjects = [
-            subject for subject in subjects
+            subject
+            for subject in subjects
             if (
                 op.exists(op.join(study_dir, subject, "rfMRI_1RL.pt"))
                 and op.exists(op.join(study_dir, subject, "rfMRI_1LR.pt"))
