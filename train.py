@@ -219,6 +219,7 @@ def train_cgan(
     device="auto",
     val_loader=None,
     verbose_interval=None,
+    batch_verbose=False,
     progress_bar=True,
     checkpoint_interval=None,
     checkpoint_file_pattern="generator_%d.pt",
@@ -271,6 +272,9 @@ def train_cgan(
     verbose_interval : int, optional
         Every `verbose_interval` epochs, the train loop will print the
         training loss.
+
+    batch_verbose : bool, default=False
+        If True, print loss information for every batch.
 
     progress_bar : bool, default=True,
         If True, show progress bar for epochs.
@@ -345,7 +349,7 @@ def train_cgan(
         total_train_loss = []
         g_train_loss = []
         d_train_loss = []
-        for images, targets in train_loader:
+        for batch_idx, images, targets in enumerate(train_loader):
             real_A = images.to(device)
             real_B = targets.to(device)
             valid = torch.ones(real_A.size(0), *patch_size, requires_grad=False).to(
@@ -403,6 +407,11 @@ def train_cgan(
             total_train_loss.append(loss_G.item())
             d_train_loss.append(loss_GAN.item())
             g_train_loss.append(loss_voxel.item())
+
+            if batch_verbose:
+                msg = f"Epoch {epoch:03d}, batch {batch_idx}: total_loss = {loss_G.item()} "
+                msg += f"G loss = {loss_voxel.item()}, D loss = {loss_GAN.item()}"
+                print(msg)
 
         total_train_loss = np.mean(total_train_loss)
         d_train_loss = np.mean(d_train_loss)
