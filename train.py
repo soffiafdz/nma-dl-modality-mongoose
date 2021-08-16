@@ -24,7 +24,8 @@ TrainResults = namedtuple(
 CGANTrainResults = namedtuple(
     "CGANTrainResults",
     [
-        "model",
+        "g_model",
+        "d_model",
         "total_train_loss_history",
         "g_train_loss_history",
         "d_train_loss_history",
@@ -457,7 +458,8 @@ def train_cgan(
             )
 
     return CGANTrainResults(
-        model,
+        g_model,
+        d_model,
         total_train_loss_history,
         g_train_loss_history,
         d_train_loss_history,
