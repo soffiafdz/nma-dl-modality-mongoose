@@ -72,7 +72,7 @@ class HCPDataset(Dataset):
 
         sub_regex = re.compile("sub-[0-9]*")
         self.study_dir = study_dir
-        self.subjects = sorted(
+        subjects = sorted(
             [
                 sub_regex.search(path).group()
                 for path in glob(op.join(study_dir, "sub-*"))
@@ -80,9 +80,11 @@ class HCPDataset(Dataset):
         )
 
         self.subjects = [
-            subject for subject in self.subjects
-            if op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1RL.pt"))
-            and op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1LR.pt"))
+            subject for subject in subjects
+            if (
+                op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1RL.pt"))
+                and op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1LR.pt"))
+            )
         ]
 
         n_subjects = len(self.subjects)
