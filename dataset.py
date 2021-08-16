@@ -118,17 +118,30 @@ class HCPDataset(Dataset):
 
     def __getitem__(self, idx):
         input_images = []
-        for paths in self.input_paths:
+        for modality, paths in self.input_paths.items():
             img = torch.load(paths[idx])
+
             if self.feature_transform:
                 img = self.feature_transform(img)
 
+            # Either add a channel or if DWI, move channel to first dimension
+            if "dwi" in modality:
+                img = img.permute(3, 0, 1, 2)
+            else:
+                img = img.unsqueeze(0)
+
             input_images.append(img)
 
-        input_img = torch.stack(input_images).squeeze()
+        input_img = torch.concat(input_images)
         output_img = torch.load(self.output_paths[self.output_modality][idx])
         if self.target_transform:
             output_img = self.target_transform(output_img)
+
+        # Either add a channel or if DWI, move channel to first dimension
+        if "dwi" in self.output_modality:
+            output_img = output_img.permute(3, 0, 1, 2)
+        else:
+            output_img = output_img.unsqueeze(0)
 
         return input_img, output_img
 
