@@ -3,7 +3,29 @@ import re
 import torch
 
 from glob import glob
+from torch.nn import ConstantPad3d
 from torch.utils.data import Dataset
+
+
+def pad_to_multiple_of_16(img):
+    # required_padding = [16 - dim % 16 for dim in img.shape]
+    return ConstantPad3d(padding=(0, 0, 4, 3, 0, 0), value=0)(img)
+
+
+def min_max_scale(img):
+    return (
+        2
+        * (img - img.amin(dim=(1, 2, 3)).reshape(-1, 1, 1, 1))
+        / (
+            img.amax(dim=(1, 2, 3)).reshape(-1, 1, 1, 1)
+            - img.amin(dim=(1, 2, 3)).reshape(-1, 1, 1, 1)
+        )
+        - 1
+    )
+
+
+def default_preprocessing(img):
+    return pad_to_multiple_of_16(min_max_scale(img))
 
 
 class HCPDataset(Dataset):
@@ -107,8 +129,14 @@ class HCPDataset(Dataset):
                     for sub in self.subjects
                 ]
 
-        self.feature_transform = feature_transform
-        self.target_transform = target_transform
+        self.feature_transform = (
+            default_preprocessing
+            if feature_transform == "default"
+            else feature_transform
+        )
+        self.target_transform = (
+            default_preprocessing if target_transform == "default" else target_transform
+        )
 
     def __len__(self):
         if self.slices is None:
@@ -121,27 +149,28 @@ class HCPDataset(Dataset):
         for modality, paths in self.input_paths.items():
             img = torch.load(paths[idx])
 
-            if self.feature_transform:
-                img = self.feature_transform(img)
-
             # Either add a channel or if DWI, move channel to first dimension
             if "dwi" in modality:
                 img = img.permute(3, 0, 1, 2)
             else:
                 img = img.unsqueeze(0)
 
+            if self.feature_transform:
+                img = self.feature_transform(img)
+
             input_images.append(img)
 
-        input_img = torch.concat(input_images)
+        input_img = torch.cat(input_images)
         output_img = torch.load(self.output_paths[self.output_modality][idx])
-        if self.target_transform:
-            output_img = self.target_transform(output_img)
 
         # Either add a channel or if DWI, move channel to first dimension
         if "dwi" in self.output_modality:
             output_img = output_img.permute(3, 0, 1, 2)
         else:
             output_img = output_img.unsqueeze(0)
+
+        if self.target_transform:
+            output_img = self.target_transform(output_img)
 
         return input_img, output_img
 
