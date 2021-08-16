@@ -25,7 +25,7 @@ class HCPDataset(Dataset):
 
         valid_modalities = ["t1w", "t2w", "resting_lr", "resting_rl", "dwi"]
 
-        if output_modality in valid_modalities:
+        if output_modality not in valid_modalities:
             raise ValueError(f"Output modality must be in {valid_modalities}")
 
         self.output_modality = (
