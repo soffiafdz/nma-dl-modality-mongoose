@@ -12,10 +12,10 @@ from torch.utils.data import DataLoader
 from collections import namedtuple
 from tqdm.auto import trange
 
-from models import weights_init_normal
-from models import GeneratorUNet
-from dice_loss import diceloss
-from dataset import HCPStructuralDataset
+from .models import weights_init_normal
+from .models import GeneratorUNet
+from .dice_loss import diceloss
+from .dataset import HCPStructuralDataset
 
 TrainResults = namedtuple(
     "TrainResults", ["model", "train_loss_history", "val_loss_history"]
@@ -134,8 +134,7 @@ def train_generator_only(
             f"but checkpointed epochs = {starting_epoch}."
         )
 
-    epoch_range = trange(starting_epoch, n_epochs) \
-        if progress_bar else range(n_epochs)
+    epoch_range = trange(starting_epoch, n_epochs) if progress_bar else range(n_epochs)
     if checkpoint_interval is not None:
         os.makedirs(op.dirname(checkpoint_file_pattern), exist_ok=True)
 
@@ -178,8 +177,7 @@ def train_generator_only(
                 msg += f" val_loss = {val_loss}"
             print(msg)
 
-        if checkpoint_interval is not None \
-                and epoch % checkpoint_interval == 0:
+        if checkpoint_interval is not None and epoch % checkpoint_interval == 0:
             torch.save(
                 {
                     "epoch": epoch,
@@ -195,39 +193,48 @@ def train_generator_only(
     return TrainResults(model, train_loss_history, val_loss_history)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+
     def parse_options():
         """Argument parser."""
         parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-            description="Train model"
+            description="Train model",
         )
 
-        parser.add_argument("data_dir",
-                            help="Study data directory")
-        parser.add_argument("-d", "--device",
-                            choices=['auto', 'cuda', 'cpu'],
-                            default="auto",
-                            help="Device on which to train the model")
-        parser.add_argument("-w", "--workers",
-                            type=int,
-                            default=0,
-                            help="Number of workers for the DataLoader")
-        parser.add_argument("-e", "--epochs",
-                            type=int,
-                            default=10,
-                            help="Number of epochs to use for training")
-        parser.add_argument("-b", "--batch",
-                            type=int,
-                            default=4,
-                            help="Batch size")
-        parser.add_argument("-c", "--checkpoint",
-                            type=int,
-                            default=1,
-                            help="Number of epochs after which the model will"
-                            " be saved")
-        parser.add_argument("-i", "--init_path",
-                            help="Path to use for initialization checkpoint")
+        parser.add_argument("data_dir", help="Study data directory")
+        parser.add_argument(
+            "-d",
+            "--device",
+            choices=["auto", "cuda", "cpu"],
+            default="auto",
+            help="Device on which to train the model",
+        )
+        parser.add_argument(
+            "-w",
+            "--workers",
+            type=int,
+            default=0,
+            help="Number of workers for the DataLoader",
+        )
+        parser.add_argument(
+            "-e",
+            "--epochs",
+            type=int,
+            default=10,
+            help="Number of epochs to use for training",
+        )
+        parser.add_argument("-b", "--batch", type=int, default=4, help="Batch size")
+        parser.add_argument(
+            "-c",
+            "--checkpoint",
+            type=int,
+            default=1,
+            help="Number of epochs after which the model will" " be saved",
+        )
+        parser.add_argument(
+            "-i", "--init_path", help="Path to use for initialization checkpoint"
+        )
         options = parser.parse_args()
         return options
 
@@ -237,16 +244,18 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=2e4)
     loss = diceloss()
     train_dataloader = DataLoader(
-        HCPStructuralDataset(
-            split="train", study_dir=opts.data_dir, transform=preproc
-        ),
-        batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+        HCPStructuralDataset(split="train", study_dir=opts.data_dir, transform=preproc),
+        batch_size=opts.batch,
+        shuffle=True,
+        num_workers=opts.workers,
     )
     val_dataloader = DataLoader(
         HCPStructuralDataset(
             split="validate", study_dir=opts.data_dir, transform=preproc
         ),
-        batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+        batch_size=opts.batch,
+        shuffle=True,
+        num_workers=opts.workers,
     )
     # test_dataloader = DataLoader(
     #     HCPStructuralDataset(
@@ -264,10 +273,9 @@ if __name__ == '__main__':
         n_epochs=opts.epochs,
         val_loader=val_dataloader,
         verbose_interval=1,
-        checkpoint_file_pattern=op.join(opts.data_dir,
-                                        "weights",
-                                        "t1_to_t2",
-                                        "generator_%d.pt"),
+        checkpoint_file_pattern=op.join(
+            opts.data_dir, "weights", "t1_to_t2", "generator_%d.pt"
+        ),
         checkpoint_interval=opts.checkpoint,
-        init_checkpoint=opts.init_path
+        init_checkpoint=opts.init_path,
     )
