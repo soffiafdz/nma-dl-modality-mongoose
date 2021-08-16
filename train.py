@@ -1,17 +1,45 @@
-import numpy as np
-import os
-import os.path as op
-import torch
+#!/bin/python3
 
+"""Train the generator."""
+import os
+import torch
+import argparse
+import numpy as np
+import os.path as op
+
+from torch.nn import ConstantPad3d
+from torch.utils.data import DataLoader
 from collections import namedtuple
 from tqdm.auto import trange
 
-from .models import weights_init_normal
-
+from models import weights_init_normal
+from models import GeneratorUNet
+from dice_loss import diceloss
+from dataset import HCPStructuralDataset
 
 TrainResults = namedtuple(
     "TrainResults", ["model", "train_loss_history", "val_loss_history"]
 )
+
+
+def add_channel(img):
+    """TO BE FILLED..."""
+    return img.unsqueeze(0)
+
+
+def pad_to_multiple_of_16(img):
+    """Add padding for the image to be a multiple of 16."""
+    return ConstantPad3d(padding=(0, 0, 4, 3, 0, 0), value=0)(img)
+
+
+def min_max_scale(img):
+    """TO BE FILLED..."""
+    return 2 * (img - img.min()) / (img.max() - img.min()) - 1
+
+
+def preproc(img):
+    """TO BE FILLED..."""
+    return add_channel(pad_to_multiple_of_16(min_max_scale(img)))
 
 
 def train_generator_only(
@@ -19,8 +47,8 @@ def train_generator_only(
     optimizer,
     loss_fn,
     train_loader,
-    device,
     n_epochs,
+    device="auto",
     val_loader=None,
     verbose_interval=None,
     progress_bar=True,
@@ -44,8 +72,9 @@ def train_generator_only(
     train_loader : torch.utils.data.DataLoader subclass
         The dataset loader for the training data
 
-    device : ["cpu", "cuda"]
-        The device on which to train the model
+    device : ["cpu", "cuda", "auto"]
+        The device on which to train the model.
+        If auto (default), use GPU (cuda) if available or fallback to cpu.
 
     n_epochs : int
         The number of epochs to use for training
@@ -75,6 +104,14 @@ def train_generator_only(
         The path to use for the intialization checkpoint. If None,
         this function will train from scratch.
     """
+    valid_devices = ["auto", "cpu", "cuda"]
+    if device not in valid_devices:
+        raise ValueError(
+            f"device must be one of {valid_devices}. Got {device} instead."
+        )
+    elif device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model = model.to(device)
     if init_checkpoint is not None:
         checkpoint = torch.load(init_checkpoint)
@@ -92,11 +129,13 @@ def train_generator_only(
 
     if starting_epoch > n_epochs:
         raise ValueError(
-            "The checkpointed epoch number exceeds the number of requested epochs. "
-            f"n_epochs = {n_epochs} but checkpointed epochs = {starting_epoch}."
+            "Checkpointed epoch number exceeds the number of requested epochs."
+            f"n_epochs = {n_epochs} "
+            f"but checkpointed epochs = {starting_epoch}."
         )
 
-    epoch_range = trange(starting_epoch, n_epochs) if progress_bar else range(n_epochs)
+    epoch_range = trange(starting_epoch, n_epochs) \
+        if progress_bar else range(n_epochs)
     if checkpoint_interval is not None:
         os.makedirs(op.dirname(checkpoint_file_pattern), exist_ok=True)
 
@@ -139,7 +178,8 @@ def train_generator_only(
                 msg += f" val_loss = {val_loss}"
             print(msg)
 
-        if checkpoint_interval is not None and epoch % checkpoint_interval == 0:
+        if checkpoint_interval is not None \
+                and epoch % checkpoint_interval == 0:
             torch.save(
                 {
                     "epoch": epoch,
@@ -153,3 +193,81 @@ def train_generator_only(
             )
 
     return TrainResults(model, train_loss_history, val_loss_history)
+
+
+if __name__ == '__main__':
+    def parse_options():
+        """Argument parser."""
+        parser = argparse.ArgumentParser(
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+            description="Train model"
+        )
+
+        parser.add_argument("data_dir",
+                            help="Study data directory")
+        parser.add_argument("-d", "--device",
+                            choices=['auto', 'cuda', 'cpu'],
+                            default="auto",
+                            help="Device on which to train the model")
+        parser.add_argument("-w", "--workers",
+                            type=int,
+                            default=0,
+                            help="Number of workers for the DataLoader")
+        parser.add_argument("-e", "--epochs",
+                            type=int,
+                            default=10,
+                            help="Number of epochs to use for training")
+        parser.add_argument("-b", "--batch",
+                            type=int,
+                            default=4,
+                            help="Batch size")
+        parser.add_argument("-c", "--checkpoint",
+                            type=int,
+                            default=1,
+                            help="Number of epochs after which the model will"
+                            " be saved")
+        parser.add_argument("-i", "--init_path",
+                            help="Path to use for initialization checkpoint")
+        options = parser.parse_args()
+        return options
+
+    opts = parse_options()
+
+    model = GeneratorUNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e4)
+    loss = diceloss()
+    train_dataloader = DataLoader(
+        HCPStructuralDataset(
+            split="train", study_dir=opts.data_dir, transform=preproc
+        ),
+        batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+    )
+    val_dataloader = DataLoader(
+        HCPStructuralDataset(
+            split="validate", study_dir=opts.data_dir, transform=preproc
+        ),
+        batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+    )
+    # test_dataloader = DataLoader(
+    #     HCPStructuralDataset(
+    #        split="test", study_dir=opts.data_dir, transform=preproc
+    #     ),
+    #     batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+    # )
+
+    train_generator_only(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss,
+        train_loader=train_dataloader,
+        device=opts.device,
+        n_epochs=opts.epochs,
+        val_loader=val_dataloader,
+        verbose_interval=1,
+        checkpoint_file_pattern=op.join(opts.data_dir,
+                                        "weights",
+                                        "t1_to_t2",
+                                        "generator_%d.pt"),
+        checkpoint_interval=opts.checkpoint,
+        init_checkpoint=opts.init_path
+    )

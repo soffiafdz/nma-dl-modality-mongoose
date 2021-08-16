@@ -3,7 +3,7 @@ import torch
 
 class diceloss(torch.nn.Module):
     def init(self):
-        super(diceLoss, self).init()
+        super(diceloss, self).init()
 
     def forward(self, pred, target):
         smooth = 1.0
