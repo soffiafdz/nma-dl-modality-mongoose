@@ -96,7 +96,7 @@ class HCPDataset(Dataset):
 
         self.output_paths = {
             self.output_modality: [
-                op.join(study_dir, sub, modality2filename_map[filename])
+                op.join(study_dir, sub, modality2filename_map[self.output_modality])
                 for sub in self.subjects
             ]
         }
