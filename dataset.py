@@ -79,6 +79,12 @@ class HCPDataset(Dataset):
             ]
         )
 
+        self.subjects = [
+            subject for subject in self.subjects
+            if op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1RL.pt"))
+            and op.exists(op.join(study_dir, f"sub-{subject}", "rfMRI_1LR.pt"))
+        ]
+
         n_subjects = len(self.subjects)
         n_train = int(n_subjects * 0.6)
         n_validate = int(n_subjects * 0.2)
