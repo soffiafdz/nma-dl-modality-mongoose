@@ -6,6 +6,131 @@ from glob import glob
 from torch.utils.data import Dataset
 
 
+class HCPDataset(Dataset):
+    def __init__(
+        self,
+        study_dir,
+        transform=None,
+        input_modalities=None,
+        output_modality=None,
+        split="train",
+        include_bval_bvec=False,
+    ):
+        self.include_bval_bvec = include_bval_bvec
+        if self.include_bval_bvec:
+            raise NotImplementedError(
+                "Inclusion of the bval and bvec tensors is not currently supported."
+            )
+
+        valid_modalities = ["t1w", "t2w", "resting_lr", "resting_rl", "dwi"]
+
+        if output_modality in valid_modalities:
+            raise ValueError(f"Output modality must be in {valid_modalities}")
+
+        self.output_modality = (
+            "dwi_predict" if output_modality == "dwi" else output_modality
+        )
+
+        self.input_modalities = (
+            ["t1w"] if input_modalities is None else list(input_modalities)
+        )
+        if not all(modality in valid_modalities for modality in self.input_modalities):
+            raise ValueError(f"All input modalities must be in {valid_modalities}")
+
+        self.input_modalities = [
+            modality.replace("dwi", "dwi_known") for modality in self.input_modalities
+        ]
+
+        valid_splits = ["train", "validate", "test"]
+        if split not in valid_splits:
+            raise ValueError(
+                f"split must be on of {valid_splits}. Got {split} instead."
+            )
+
+        sub_regex = re.compile("sub-[0-9]*")
+        self.study_dir = study_dir
+        self.subjects = sorted(
+            [
+                sub_regex.search(path).group()
+                for path in glob(op.join(study_dir, "sub-*"))
+            ]
+        )
+
+        n_subjects = len(self.subjects)
+        n_train = int(n_subjects * 0.6)
+        n_validate = int(n_subjects * 0.2)
+
+        if split == "train":
+            self.subjects = self.subjects[:n_train]
+        elif split == "validate":
+            self.subjects = self.subjects[n_train : n_train + n_validate]
+        else:
+            self.subjects = self.subjects[n_train + n_validate :]
+
+        modality2filename_map = {
+            "t1w": "t1w.pt",
+            "t2w": "t2w.pt",
+            "resting_lr": "rfMRI_1LR.pt",
+            "resting_rl": "rfMRI_1RL.pt",
+            "dwi_known": "dwi_known.pt",
+            "dwi_predict": "dwi_predict.pt",
+            "bval_known": "bval_predict.pt",
+            "bval_predict": "bval_predict.pt",
+            "bvec_known": "bvec_known.pt",
+            "bvec_predict": "bvec_predict.pt",
+        }
+
+        self.input_paths = {}
+        for modality in self.input_modalities:
+            self.input_paths[modality] = [
+                op.join(study_dir, sub, modality2filename_map[modality])
+                for sub in self.subjects
+            ]
+            if modality == "dwi_known" and self.include_bval_bvec:
+                for filename in ["bval_known", "bvec_known"]:
+                    self.input_paths[filename] = [
+                        op.join(study_dir, sub, modality2filename_map[filename])
+                        for sub in self.subjects
+                    ]
+
+        self.output_paths = {
+            self.output_modality: [
+                op.join(study_dir, sub, modality2filename_map[filename])
+                for sub in self.subjects
+            ]
+        }
+        if self.output_modality == "dwi_predict" and self.include_bval_bvec:
+            for filename in ["bval_predict", "bvec_predict"]:
+                self.output_paths[filename] = [
+                    op.join(study_dir, sub, modality2filename_map[filename])
+                    for sub in self.subjects
+                ]
+
+        self.transform = transform
+
+    def __len__(self):
+        if self.slices is None:
+            return len(self.subjects)
+        else:
+            return len(self.subjects) * len(self.slices)
+
+    def __getitem__(self, idx):
+        input_images = []
+        for paths in self.input_paths:
+            img = torch.load(paths[idx])
+            if self.transform:
+                img = self.transform(img)
+
+            input_images.append(img)
+
+        input_img = torch.stack(input_images).squeeze()
+        output_img = torch.load(self.output_paths[self.output_modality][idx])
+        if self.transform:
+            output_img = self.transform(output_img)
+
+        return input_img, output_img
+
+
 class HCPStructuralDataset(Dataset):
     def __init__(
         self,
