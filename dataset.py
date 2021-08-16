@@ -10,7 +10,8 @@ class HCPDataset(Dataset):
     def __init__(
         self,
         study_dir,
-        transform=None,
+        feature_transform=None,
+        target_transform=None,
         input_modalities=None,
         output_modality=None,
         split="train",
@@ -106,7 +107,8 @@ class HCPDataset(Dataset):
                     for sub in self.subjects
                 ]
 
-        self.transform = transform
+        self.feature_transform = feature_transform
+        self.target_transform = target_transform
 
     def __len__(self):
         if self.slices is None:
@@ -118,15 +120,15 @@ class HCPDataset(Dataset):
         input_images = []
         for paths in self.input_paths:
             img = torch.load(paths[idx])
-            if self.transform:
-                img = self.transform(img)
+            if self.feature_transform:
+                img = self.feature_transform(img)
 
             input_images.append(img)
 
         input_img = torch.stack(input_images).squeeze()
         output_img = torch.load(self.output_paths[self.output_modality][idx])
-        if self.transform:
-            output_img = self.transform(output_img)
+        if self.target_transform:
+            output_img = self.target_transform(output_img)
 
         return input_img, output_img
 
