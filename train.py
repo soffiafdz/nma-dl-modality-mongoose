@@ -234,7 +234,7 @@ if __name__ == '__main__':
     opts = parse_options()
 
     model = GeneratorUNet()
-    optimizer = torch.optim.Adam(model.parameters(), lr=2e4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
     loss = diceloss()
     train_dataloader = DataLoader(
         HCPStructuralDataset(
