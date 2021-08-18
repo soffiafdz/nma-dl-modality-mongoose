@@ -12,10 +12,10 @@ from torch.utils.data import DataLoader
 from collections import namedtuple
 from tqdm.auto import trange
 
-from .models import weights_init_normal
-from .models import GeneratorUNet
-from .dice_loss import diceloss
-from .dataset import HCPStructuralDataset
+from models import weights_init_normal
+from models import GeneratorUNet, Discriminator
+from dice_loss import diceloss
+from dataset import HCPStructuralDataset, HCPDataset
 
 TrainResults = namedtuple(
     "TrainResults", ["model", "train_loss_history", "val_loss_history"]
@@ -226,7 +226,7 @@ def train_cgan(
     checkpoint_file_pattern="generator_%d.pt",
     init_checkpoint=None,
 ):
-    """Train a generator model only.
+    """Train complete cGAN.
 
     Parameters
     ----------
@@ -473,10 +473,32 @@ if __name__ == "__main__":
         """Argument parser."""
         parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-            description="Train model",
+            description="Train cGAN model",
         )
-
         parser.add_argument("data_dir", help="Study data directory")
+        parser.add_argument(
+            "--input",
+            choices=["t1w", "t2w", "resting_lr", "resting_rl", "dwi"],
+            nargs="+",
+            help="Modality(ies) used as input for the model"
+        )
+        parser.add_argument(
+            "--output",
+            choices=["t1w", "t2w", "resting_lr", "resting_rl", "dwi"],
+            help="Modality used as output for the model"
+        )
+        parser.add_argument(
+            "--dwi_input_idx",
+            nargs="*",
+            type=int,
+            help="DWI slices to use as input: --dwi_input 0 1 2"
+        )
+        parser.add_argument(
+            "--dwi_output_idx",
+            nargs="*",
+            type=int,
+            help="DWI slices to use as output: --dwi_output 0 1 2"
+        )
         parser.add_argument(
             "-d",
             "--device",
@@ -498,58 +520,137 @@ if __name__ == "__main__":
             default=10,
             help="Number of epochs to use for training",
         )
-        parser.add_argument("-b", "--batch", type=int, default=4, help="Batch size")
+        parser.add_argument(
+            "-b",
+            "--batch",
+            type=int,
+            default=4,
+            help="Batch size"
+        )
         parser.add_argument(
             "-c",
             "--checkpoint",
             type=int,
             default=1,
-            help="Number of epochs after which the model will" " be saved",
+            help="Number of epochs after which the model will be saved",
         )
         parser.add_argument(
-            "-i", "--init_path", help="Path to use for initialization checkpoint"
+            "-i", "--init_path",
+            help="Path to use for initialization checkpoint"
+        )
+        parser.add_argument(
+            "-g",
+            "--generator_only",
+            action='store_true',
+            help="Run only the generator part of the model"
         )
         options = parser.parse_args()
         return options
 
     opts = parse_options()
 
-    model = GeneratorUNet()
-    optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
-    loss = diceloss()
-    train_dataloader = DataLoader(
-        HCPStructuralDataset(split="train", study_dir=opts.data_dir, transform=preproc),
-        batch_size=opts.batch,
-        shuffle=True,
-        num_workers=opts.workers,
-    )
-    val_dataloader = DataLoader(
-        HCPStructuralDataset(
-            split="validate", study_dir=opts.data_dir, transform=preproc
-        ),
-        batch_size=opts.batch,
-        shuffle=True,
-        num_workers=opts.workers,
-    )
-    # test_dataloader = DataLoader(
-    #     HCPStructuralDataset(
-    #        split="test", study_dir=opts.data_dir, transform=preproc
-    #     ),
-    #     batch_size=opts.batch, shuffle=True, num_workers=opts.workers
-    # )
+    if opts.generator_only:
+        model = GeneratorUNet()
+        optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+        loss = diceloss()
+        train_dataloader = DataLoader(
+            HCPStructuralDataset(
+                split="train", study_dir=opts.data_dir, transform=preproc
+            ),
+            batch_size=opts.batch,
+            shuffle=True,
+            num_workers=opts.workers,
+        )
+        val_dataloader = DataLoader(
+            HCPStructuralDataset(
+                split="validate", study_dir=opts.data_dir, transform=preproc
+            ),
+            batch_size=opts.batch,
+            shuffle=True,
+            num_workers=opts.workers,
+        )
+        # test_dataloader = DataLoader(
+        #     HCPStructuralDataset(
+        #        split="test", study_dir=opts.data_dir, transform=preproc
+        #     ),
+        #     batch_size=opts.batch, shuffle=True, num_workers=opts.workers
+        # )
 
-    train_generator_only(
-        model=model,
-        optimizer=optimizer,
-        loss_fn=loss,
-        train_loader=train_dataloader,
-        device=opts.device,
-        n_epochs=opts.epochs,
-        val_loader=val_dataloader,
-        verbose_interval=1,
-        checkpoint_file_pattern=op.join(
-            opts.data_dir, "weights", "t1_to_t2", "generator_%d.pt"
-        ),
-        checkpoint_interval=opts.checkpoint,
-        init_checkpoint=opts.init_path,
-    )
+        train_generator_only(
+            model=model,
+            optimizer=optimizer,
+            loss_fn=loss,
+            train_loader=train_dataloader,
+            device=opts.device,
+            n_epochs=opts.epochs,
+            val_loader=val_dataloader,
+            verbose_interval=1,
+            checkpoint_file_pattern=op.join(
+                opts.data_dir, "weights", "t1_to_t2", "generator_%d.pt"
+            ),
+            checkpoint_interval=opts.checkpoint,
+            init_checkpoint=opts.init_path,
+        )
+    else:
+        kwargs = dict(
+            study_dir=opts.data_dir,
+            target_transform="default",
+            feature_transform="default",
+            dwi_input_slice_idx=opts.dwi_input_idx,
+            dwi_output_slice_idx=opts.dwi_output_idx,
+            input_modalities=opts.input,
+            output_modality=opts.output
+        )
+        input_img, output_img = next(iter(HCPDataset(split="train", **kwargs)))
+        g_model = GeneratorUNet(
+            in_channels=input_img.shape[0],
+            out_channels=output_img.shape[0]
+        )
+        d_model = Discriminator(
+            generator_in_channels=input_img.shape[0],
+            generator_out_channels=output_img.shape[0]
+        )
+
+        # model = GeneratorUNet()
+        # optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+        # loss = diceloss()
+        train_dataloader = DataLoader(
+            HCPDataset(split="train", **kwargs),
+            batch_size=opts.batch,
+            shuffle=True,
+            num_workers=opts.workers,
+            pin_memory=True,
+        )
+        val_dataloader = DataLoader(
+            HCPDataset(split="validate", **kwargs),
+            batch_size=opts.batch,
+            shuffle=True,
+            num_workers=opts.workers,
+            pin_memory=True,
+        )
+
+        # test_dataloader = DataLoader(
+        #   HCPStructuralDataset(split="test", **kwargs),
+        #   batch_size=opts.batch,
+        #   shuffle=True,
+        #   num_workers=opts.workers
+        #   pin_memory=True,
+        # )
+
+        train_cgan(
+            g_model=g_model,
+            d_model=d_model,
+            g_optimizer=torch.optim.Adam(g_model.parameters(), lr=2e-4),
+            d_optimizer=torch.optim.Adam(d_model.parameters(), lr=2e-4),
+            train_loader=train_dataloader,
+            device=opts.device,
+            n_epochs=opts.epochs,
+            val_loader=val_dataloader,
+            verbose_interval=1,
+            batch_verbose=True,
+            checkpoint_file_pattern=op.join(
+                opts.data_dir, "weights", "cGan_%d.pt"
+            ),
+            checkpoint_interval=opts.checkpoint,
+            init_checkpoint=opts.init_path,
+        )
